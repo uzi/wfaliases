@@ -1,0 +1,172 @@
+#!/usr/bin/env python
+# (c) 2012-2014 Joshua Uziel <uzi@uzix.org>
+#
+# A script to manage email aliases in a Webfaction account like
+# good ol' unix email alias files.
+
+# See http://docs.webfaction.com/xmlrpc-api/apiref.html
+
+import os
+import xmlrpclib
+
+RCFILE = os.path.join(os.environ.get('HOME', ''), '.wfaliasrc')
+
+class AliasFile(object):
+  """
+  Parses a single alias file.
+  """
+
+  def __init__(self, filename, *args, **kwargs):
+    super(AliasFile, self).__init__(*args, **kwargs)
+
+    self.domain = os.path.basename(filename)
+    self.file = open(filename, 'r')
+
+  def parse(self):
+    """
+    Parse a single alias file using the filename as the domain.
+    """
+    ret = {}
+    for line in self.file:
+      entry = line.strip()
+      if not entry or entry.startswith('#'):
+        continue
+
+      try:
+        name, target = entry.split(':')
+      except:
+        raise Exception('Problem with line "%s" in file %s' % (line, self.file))
+      email = '@'.join([name, self.domain])
+      target = target.strip().replace(' ', '')
+
+      ret[email] = target
+
+    return ret
+
+class AliasDir(object):
+  """
+  Processes the files in the alias directory.
+  """
+
+  def __init__(self, directory, *args, **kwargs):
+    super(AliasDir, self).__init__(*args, **kwargs)
+
+    if not os.path.isdir(directory):
+      raise ValueError('Directory not found: %s' % directory)
+    self.directory = directory
+
+  def process(self):
+    """
+    Processes the files in the alias directory.
+    Returns the new state of things.
+    """
+    # Find all the files in the alias directory
+    files = []
+    for f in os.listdir(self.directory):
+      if f.startswith('.'):
+        # Skip dotfiles
+        continue
+      filepath = os.path.join(self.directory, f)
+      if os.path.isfile(filepath) or os.path.islink(filepath):
+        files.append(filepath)
+
+    # Get all the aliases in each of the files
+    aliases = {}
+    for alias_file in files:
+      af = AliasFile(alias_file)
+      aliases.update(af.parse())
+
+    return aliases
+
+class WFEmail(object):
+  def __init__(self):
+    self.username, self.password, self.aliasdir = self.parse_rcfile()
+    self.server = xmlrpclib.ServerProxy('https://api.webfaction.com/')
+    self.session_id, self.account = self.server.login(self.username,
+                                                      self.password)
+
+  def parse_rcfile(self):
+    ret = {}
+    try:
+      execfile(RCFILE, {}, ret)
+    except IOError:
+      raise Exception('No configuration file found at %s' % RCFILE)
+
+    username = ret.get('USERNAME')
+    password = ret.get('PASSWORD')
+    aliasdir = ret.get('ALIASDIR')
+    if None in (username, password, aliasdir):
+      raise Exception('Need a username, password and alias directory to work.')
+    return username, password, aliasdir
+
+  def update(self):
+    """
+    Compare the existing state with the new state and make the necesary
+    alias creations, updates and deletions.
+    """
+
+    # Get the new and current states and sets of their keys for
+    # quick and easy comparisons
+    new_state = self.get_new_state()
+    new_set = set(new_state.keys())
+
+    current_state = self.get_current_state()
+    current_set = set(current_state.keys())
+
+    # Update the items that have changed
+    common = new_set.intersection(current_set)
+    for entry in common:
+      current_target = current_state.get(entry)
+      new_target = new_state.get(entry)
+
+      if new_target != current_target:
+        print 'Updating %s from %s to %s' % (entry, current_target, new_target)
+        self.update_email(entry, new_target)
+
+    # Delete the items that are no more
+    to_delete = current_set - new_set
+    for entry in to_delete:
+      print 'Deleting %s' % entry
+      self.delete_email(entry)
+
+    # Create the new items
+    to_add = new_set - current_set
+    for entry in to_add:
+      print 'Adding %s' % entry
+      target = new_state.get(entry)
+      self.create_email(entry, target)
+
+  def get_new_state(self):
+    """
+    Get the new state of email aliases in an alias directory.
+    """
+    ad = AliasDir(self.aliasdir)
+    return ad.process()
+
+  def get_current_state(self):
+    """
+    Get the current state of email aliases in a Webfaction account.
+    """
+    state = {}
+    current_emails = self.server.list_emails(self.session_id)
+    for item in current_emails:
+      address = item.get('email_address')
+      target = item.get('targets')
+      state[address] = target
+    return state
+
+  def create_email(self, email, target):
+    """Wrapper to create an email alias."""
+    self.server.create_email(self.session_id, email, target)
+
+  def update_email(self, email, target):
+    """Wrapper to change an email alias."""
+    self.server.update_email(self.session_id, email, target)
+
+  def delete_email(self, email):
+    """Wrapper to delete an email alias."""
+    self.server.delete_email(self.session_id, email)
+
+if __name__ == '__main__':
+  wfe = WFEmail()
+  wfe.update()

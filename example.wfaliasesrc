@@ -1,0 +1,10 @@
+# Example .wfaliasesrc file.  Put me in $HOME.
+
+# Your Webfaction account username
+USERNAME = 'username'
+
+# Your Webfaction account password
+PASSWORD = 'password
+
+# Where your email aliases are.
+ALIASDIR = '/Users/myusername/wfalises'
