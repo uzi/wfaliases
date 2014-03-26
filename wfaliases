@@ -9,7 +9,7 @@
 import os
 import xmlrpclib
 
-RCFILE = os.path.join(os.environ.get('HOME', ''), '.wfaliasrc')
+RCFILE = os.path.join(os.environ.get('HOME', ''), '.wfaliasesrc')
 
 class AliasFile(object):
   """
